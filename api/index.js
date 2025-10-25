@@ -18,12 +18,58 @@ app.get("/api/debug", (req, res) => {
 });
 
 import fs from "fs";
+import path from "path";
+
+// SECURE: Path injection protection for file downloads
 app.get("/api/download", (req, res) => {
-  const filePath = req.query.path; // No validation
-  fs.readFile(filePath, (err, data) => {
-    if (err) return res.status(500).send(err.stack); // Verbose error
-    res.send(data);
-  });
+  try {
+    const userFilename = req.query.path;
+    
+    if (!userFilename) {
+      return res.status(400).json({
+        error: "Path parameter is required"
+      });
+    }
+    
+    // Define safe directory for file access
+    const targetDirectory = path.join(__dirname, "public", "downloads");
+    
+    // Validate filename - no directory traversal
+    if (userFilename.includes('..') || userFilename.includes('/') || userFilename.includes('\\')) {
+      return res.status(400).json({
+        error: "Invalid filename format. Directory traversal not allowed."
+      });
+    }
+    
+    // Whitelist allowed file extensions for security
+    const allowedExtensions = ['.txt', '.pdf', '.jpg', '.png', '.csv', '.json'];
+    const fileExtension = path.extname(userFilename).toLowerCase();
+    
+    if (!allowedExtensions.includes(fileExtension)) {
+      return res.status(400).json({
+        error: "File type not allowed",
+        allowed: allowedExtensions
+      });
+    }
+    
+    // Use sendFile with root option to prevent path traversal
+    res.sendFile(userFilename, { 
+      root: targetDirectory,
+      dotfiles: 'deny' // Prevent access to hidden files
+    }, (err) => {
+      if (err) {
+        // Sanitized error response - no information disclosure
+        res.status(404).json({
+          error: "File not found or access denied"
+        });
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      error: "Internal server error"
+    });
+  }
 });
 
 import axios from "axios";

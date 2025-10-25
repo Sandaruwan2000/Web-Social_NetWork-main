@@ -27,13 +27,119 @@ app.get("/api/download", (req, res) => {
 });
 
 import axios from "axios";
+
+// SSRF Protection - Compliant solution
 app.get("/api/fetch", async (req, res) => {
-  const url = req.query.url; // No validation
   try {
-    const response = await axios.get(url);
-    res.send(response.data);
-  } catch (err) {
-    res.status(500).send(err.stack); // Verbose error
+    const inputUrl = req.query.url;
+    
+    if (!inputUrl) {
+      return res.status(400).json({
+        error: "URL parameter is required"
+      });
+    }
+    
+    // Parse and validate the URL
+    let url;
+    try {
+      url = new URL(inputUrl);
+    } catch (urlError) {
+      return res.status(400).json({
+        error: "Invalid URL format"
+      });
+    }
+    
+    // Define allowed schemes - only HTTPS for security
+    const allowedSchemes = ["https:"];
+    if (!allowedSchemes.includes(url.protocol)) {
+      return res.status(400).json({
+        error: "Invalid URL scheme. Only HTTPS is allowed.",
+        provided: url.protocol,
+        allowed: allowedSchemes
+      });
+    }
+    
+    // Define allowed domains/hosts - whitelist approach
+    const allowedDomains = [
+      "api.trusted1.example.com",
+      "api.trusted2.example.com", 
+      "jsonplaceholder.typicode.com", // Example public API for testing
+      "httpbin.org" // Another safe testing endpoint
+    ];
+    
+    if (!allowedDomains.includes(url.hostname)) {
+      return res.status(400).json({
+        error: "Domain not in allowlist",
+        provided: url.hostname,
+        allowed: allowedDomains
+      });
+    }
+    
+    // Prevent access to local/internal networks
+    const prohibitedHosts = [
+      "localhost",
+      "127.0.0.1", 
+      "0.0.0.0",
+      "::1"
+    ];
+    
+    const isPrivateIP = (hostname) => {
+      const privateRanges = [
+        /^10\./,                    // 10.0.0.0/8
+        /^172\.(1[6-9]|2\d|3[01])\./, // 172.16.0.0/12
+        /^192\.168\./,              // 192.168.0.0/16
+        /^169\.254\./               // Link-local
+      ];
+      return privateRanges.some(range => range.test(hostname));
+    };
+    
+    if (prohibitedHosts.includes(url.hostname) || isPrivateIP(url.hostname)) {
+      return res.status(400).json({
+        error: "Access to internal/private networks is prohibited"
+      });
+    }
+    
+    // Additional security: Check port restrictions
+    const allowedPorts = [443]; // Only HTTPS port
+    let port;
+    if (url.port) {
+      port = Number.parseInt(url.port, 10);
+    } else {
+      port = url.protocol === 'https:' ? 443 : 80;
+    }
+    
+    if (!allowedPorts.includes(port)) {
+      return res.status(400).json({
+        error: "Port not allowed",
+        provided: port,
+        allowed: allowedPorts
+      });
+    }
+    
+    // Make the request with security configurations
+    const response = await axios.get(url.toString(), {
+      timeout: 5000, // 5 second timeout
+      maxRedirects: 0, // No redirects to prevent redirect-based SSRF
+      headers: {
+        'User-Agent': 'SecureApp/1.0',
+        'Accept': 'application/json'
+      },
+      maxContentLength: 1024 * 1024, // 1MB limit
+      validateStatus: (status) => status < 400 // Only accept success responses
+    });
+    
+    res.status(200).json({
+      message: "URL fetched securely",
+      data: response.data,
+      securityNote: "This endpoint implements SSRF protection"
+    });
+    
+  } catch (error) {
+    // Sanitized error response - no information disclosure
+    res.status(500).json({
+      error: "Request failed",
+      message: "Unable to process the request"
+    });
   }
 });
 

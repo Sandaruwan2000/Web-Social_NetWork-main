@@ -1036,18 +1036,47 @@ export const loadDynamicPlugin = (req, res) => {
   try {
     const { pluginUrl, pluginCode, autoLoad } = req.body;
     
-    // VULNERABLE: Loading code from untrusted sources
+    // SECURE: Whitelist approach for plugin loading
     if (pluginUrl) {
-      // SonarQube should detect require() with dynamic input
-      const plugin = require(pluginUrl); // Dynamic require vulnerability
+      // Define allowed plugin paths - whitelist approach
+      const allowedPlugins = [
+        './plugins/security-scanner.js',
+        './plugins/data-validator.js',
+        './plugins/auth-helper.js',
+        './plugins/audit-logger.js'
+      ];
       
-      res.status(200).json({
-        message: "Plugin loaded from URL",
-        source: pluginUrl,
-        plugin: plugin,
-        securityStatus: "Untrusted code execution"
-      });
-      return;
+      // Validate plugin URL against whitelist
+      if (!allowedPlugins.includes(pluginUrl)) {
+        return res.status(400).json({
+          error: "Plugin not in allowlist",
+          provided: pluginUrl,
+          allowedPlugins: allowedPlugins.map(plugin => plugin.replace('./plugins/', ''))
+        });
+      }
+      
+      // Additional path validation - prevent directory traversal
+      if (pluginUrl.includes('..') || pluginUrl.includes('/') && !pluginUrl.startsWith('./plugins/')) {
+        return res.status(400).json({
+          error: "Invalid plugin path format"
+        });
+      }
+      
+      try {
+        // SECURE: Only load pre-approved plugins from whitelist
+        const plugin = require(pluginUrl);
+        
+        res.status(200).json({
+          message: "Authorized plugin loaded successfully",
+          pluginName: pluginUrl.replace('./plugins/', ''),
+          securityStatus: "Verified and authorized plugin"
+        });
+        return;
+      } catch (requireError) {
+        return res.status(500).json({
+          error: "Failed to load authorized plugin"
+        });
+      }
     }
     
     // VULNERABLE: Direct code execution from user input
